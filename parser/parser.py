@@ -27,32 +27,38 @@ GRAPH_QL_HEADERS = {
     "Referer": "https://www.olx.ua/uk/list/"
 }
 
-GRAPH_QL_QUEUE = """
+GRAPH_QL_QUERY = """
 query ListingSearchQuery(
   $searchParameters: [SearchParameter!] = []
-  $fetchJobSummary: Boolean = false
-  $fetchPayAndShip: Boolean = false
 ) {
   clientCompatibleListings(searchParameters: $searchParameters) {
     __typename
     ... on ListingSuccess {
-      __typename
       data {
         id
         title
         url
-        description
-        photos { link }
+        photos {
+          link
+        }
+        location {
+          city {
+            name
+          }
+          region {
+            name
+          }
+        }
         params {
           key
-          name
           type
           value {
-            __typename
             ... on PriceParam {
               value
               label
               currency
+              converted_value
+              converted_currency
               negotiable
               arranged
             }
@@ -64,12 +70,334 @@ query ListingSearchQuery(
         visible_total_count
       }
       links {
-        next { href }
+        next {
+          href
+        }
+      }
+    }
+    ... on ListingError {
+      error {
+        code
+        detail
+        status
+        title
+      }
+    }
+  }
+}
+"""
+
+GRAPH_QL_QUERY_EXAMPLE = """
+query ListingSearchQuery(
+  $searchParameters: [SearchParameter!] = []
+  $fetchJobSummary: Boolean = false
+  $fetchPayAndShip: Boolean = false
+) {
+  clientCompatibleListings(searchParameters: $searchParameters) {
+    __typename
+    ... on ListingSuccess {
+      __typename
+      data {
+        id
+        location {
+          city {
+            id
+            name
+            normalized_name
+            _nodeId
+          }
+          district {
+            id
+            name
+            normalized_name
+            _nodeId
+          }
+          region {
+            id
+            name
+            normalized_name
+            _nodeId
+          }
+        }
+        last_refresh_time
+        delivery {
+          rock {
+            active
+            mode
+            offer_id
+          }
+        }
+        created_time
+        category {
+          id
+          type
+          _nodeId
+        }
+        contact {
+          courier
+          chat
+          name
+          negotiation
+          phone
+        }
+        business
+        omnibus_pushup_time
+        photos {
+          link
+          height
+          rotation
+          width
+        }
+        promotion {
+          highlighted
+          top_ad
+          options
+          premium_ad_page
+          urgent
+          b2c_ad_page
+        }
+        protect_phone
+        shop {
+          subdomain
+        }
+        title
+        status
+        url
+        user {
+          id
+          uuid
+          _nodeId
+          about
+          b2c_business_page
+          banner_desktop
+          banner_mobile
+          company_name
+          created
+          is_online
+          last_seen
+          logo
+          logo_ad_page
+          name
+          other_ads_enabled
+          photo
+          seller_type
+          social_network_account_type
+          verification {
+            status
+          }
+        }
+        offer_type
+        params {
+          key
+          name
+          type
+          value {
+            __typename
+            ... on GenericParam {
+              key
+              label
+            }
+            ... on CheckboxesParam {
+              label
+              checkboxParamKey: key
+            }
+            ... on PriceParam {
+              value
+              type
+              previous_value
+              previous_label
+              negotiable
+              label
+              currency
+              converted_value
+              converted_previous_value
+              converted_currency
+              arranged
+              budget
+            }
+            ... on SalaryParam {
+              from
+              to
+              arranged
+              converted_currency
+              converted_from
+              converted_to
+              currency
+              gross
+              type
+            }
+            ... on DynamicMultiChoiceCompatibilityListParam {
+              __typename
+            }
+            ... on ErrorParam {
+              message
+            }
+          }
+        }
+        _nodeId
+        description
+        external_url
+        key_params
+        partner {
+          code
+        }
+        map {
+          lat
+          lon
+          radius
+          show_detailed
+          zoom
+        }
+        safedeal {
+          allowed_quantity
+          weight_grams
+        }
+        valid_to_time
+        isGpsrAvailable
+        jobSummary @include(if: $fetchJobSummary) {
+          whyApply
+          whyApplyTags
+        }
+        payAndShip @include(if: $fetchPayAndShip) {
+          sellerPaidDeliveryEnabled
+        }
+      }
+      metadata {
+        filter_suggestions {
+          clear_on_change
+          break_line
+          category
+          label
+          name
+          type
+          unit
+          values {
+            label
+            value
+          }
+          constraints {
+            type
+          }
+          search_label
+          option {
+            ranges
+            order
+            orderForSearch
+            fakeCategory
+          }
+        }
+        x_request_id
+        search_id
+        total_elements
+        visible_total_count
+        source
+        search_suggestion {
+          url
+          type
+          changes {
+            category_id
+            city_id
+            distance
+            district_id
+            query
+            region_id
+            strategy
+            excluded_category_id
+          }
+        }
+        facets {
+          category {
+            id
+            count
+            label
+            url
+          }
+          category_id_1 {
+            count
+            id
+            label
+            url
+          }
+          category_id_2 {
+            count
+            id
+            label
+            url
+          }
+          category_without_exclusions {
+            count
+            id
+            label
+            url
+          }
+          category_id_3_without_exclusions {
+            id
+            count
+            label
+            url
+          }
+          city {
+            count
+            id
+            label
+            url
+          }
+          district {
+            count
+            id
+            label
+            url
+          }
+          owner_type {
+            count
+            id
+            label
+            url
+          }
+          region {
+            id
+            count
+            label
+            url
+          }
+          scope {
+            id
+            count
+            label
+            url
+          }
+        }
+        new
+        promoted
+      }
+      links {
+        first {
+          href
+        }
+        next {
+          href
+        }
+        previous {
+          href
+        }
+        self {
+          href
+        }
       }
     }
     ... on ListingError {
       __typename
-      error { code detail status title }
+      error {
+        code
+        detail
+        status
+        title
+        validation {
+          detail
+          field
+          title
+        }
+      }
     }
   }
 }
@@ -82,14 +410,16 @@ def string_to_url(query: str) -> str:
     return OLX_URL + "/list/q-" + query.replace(" ", "-") + "/"
 
 
-def parse_olx_endpoint(query: str, offset: int) -> dict:
+def parse_olx_endpoint(query: str, offset: int, price_from: int = None, price_to: int = None, enum_state: str = None) -> dict:
     session = requests.Session()
     session.headers.update(GRAPH_QL_HEADERS)
 
     time.sleep(random.uniform(2, 5))
+    print("price_from: " + str(price_from))
+    print("price_to: " + str(price_to))
 
     request = {
-        "query":"query ListingSearchQuery(\n  $searchParameters: [SearchParameter!] = []\n  $fetchJobSummary: Boolean = false\n  $fetchPayAndShip: Boolean = false\n) {\n  clientCompatibleListings(searchParameters: $searchParameters) {\n    __typename\n    ... on ListingSuccess {\n      __typename\n      data {\n        id\n        location {\n          city {\n            id\n            name\n            normalized_name\n            _nodeId\n          }\n          district {\n            id\n            name\n            normalized_name\n            _nodeId\n          }\n          region {\n            id\n            name\n            normalized_name\n            _nodeId\n          }\n        }\n        last_refresh_time\n        delivery {\n          rock {\n            active\n            mode\n            offer_id\n          }\n        }\n        created_time\n        category {\n          id\n          type\n          _nodeId\n        }\n        contact {\n          courier\n          chat\n          name\n          negotiation\n          phone\n        }\n        business\n        omnibus_pushup_time\n        photos {\n          link\n          height\n          rotation\n          width\n        }\n        promotion {\n          highlighted\n          top_ad\n          options\n          premium_ad_page\n          urgent\n          b2c_ad_page\n        }\n        protect_phone\n        shop {\n          subdomain\n        }\n        title\n        status\n        url\n        user {\n          id\n          uuid\n          _nodeId\n          about\n          b2c_business_page\n          banner_desktop\n          banner_mobile\n          company_name\n          created\n          is_online\n          last_seen\n          logo\n          logo_ad_page\n          name\n          other_ads_enabled\n          photo\n          seller_type\n          social_network_account_type\n          verification {\n            status\n          }\n        }\n        offer_type\n        params {\n          key\n          name\n          type\n          value {\n            __typename\n            ... on GenericParam {\n              key\n              label\n            }\n            ... on CheckboxesParam {\n              label\n              checkboxParamKey: key\n            }\n            ... on PriceParam {\n              value\n              type\n              previous_value\n              previous_label\n              negotiable\n              label\n              currency\n              converted_value\n              converted_previous_value\n              converted_currency\n              arranged\n              budget\n            }\n            ... on SalaryParam {\n              from\n              to\n              arranged\n              converted_currency\n              converted_from\n              converted_to\n              currency\n              gross\n              type\n            }\n            ... on DynamicMultiChoiceCompatibilityListParam {\n              __typename\n            }\n            ... on ErrorParam {\n              message\n            }\n          }\n        }\n        _nodeId\n        description\n        external_url\n        key_params\n        partner {\n          code\n        }\n        map {\n          lat\n          lon\n          radius\n          show_detailed\n          zoom\n        }\n        safedeal {\n          allowed_quantity\n          weight_grams\n        }\n        valid_to_time\n        isGpsrAvailable\n        jobSummary @include(if: $fetchJobSummary) {\n          whyApply\n          whyApplyTags\n        }\n        payAndShip @include(if: $fetchPayAndShip) {\n          sellerPaidDeliveryEnabled\n        }\n      }\n      metadata {\n        filter_suggestions {\n          clear_on_change\n          break_line\n          category\n          label\n          name\n          type\n          unit\n          values {\n            label\n            value\n          }\n          constraints {\n            type\n          }\n          search_label\n          option {\n            ranges\n            order\n            orderForSearch\n            fakeCategory\n          }\n        }\n        x_request_id\n        search_id\n        total_elements\n        visible_total_count\n        source\n        search_suggestion {\n          url\n          type\n          changes {\n            category_id\n            city_id\n            distance\n            district_id\n            query\n            region_id\n            strategy\n            excluded_category_id\n          }\n        }\n        facets {\n          category {\n            id\n            count\n            label\n            url\n          }\n          category_id_1 {\n            count\n            id\n            label\n            url\n          }\n          category_id_2 {\n            count\n            id\n            label\n            url\n          }\n          category_without_exclusions {\n            count\n            id\n            label\n            url\n          }\n          category_id_3_without_exclusions {\n            id\n            count\n            label\n            url\n          }\n          city {\n            count\n            id\n            label\n            url\n          }\n          district {\n            count\n            id\n            label\n            url\n          }\n          owner_type {\n            count\n            id\n            label\n            url\n          }\n          region {\n            id\n            count\n            label\n            url\n          }\n          scope {\n            id\n            count\n            label\n            url\n          }\n        }\n        new\n        promoted\n      }\n      links {\n        first {\n          href\n        }\n        next {\n          href\n        }\n        previous {\n          href\n        }\n        self {\n          href\n        }\n      }\n    }\n    ... on ListingError {\n      __typename\n      error {\n        code\n        detail\n        status\n        title\n        validation {\n          detail\n          field\n          title\n        }\n      }\n    }\n  }\n}\n",
+        "query": GRAPH_QL_QUERY,
         "variables": {
             "searchParameters": [
                 {"key": "offset", "value": str(offset)},
@@ -98,39 +428,61 @@ def parse_olx_endpoint(query: str, offset: int) -> dict:
                 {"key": "suggest_filters", "value":"true"},
                 {"key": "sl","value": "19ab61ee5a7x555c86f7"}
             ],
-        "fetchJobSummary":False,
-        "fetchPayAndShip":True}
+            "fetchJobSummary":False,
+            "fetchPayAndShip":True
+        }
     }
+    if price_to is not None:
+        request["variables"]["searchParameters"].append({"key": "filter_float_price:to", "value": str(price_to)})
+    if price_from is not None:
+        request["variables"]["searchParameters"].append({"key": "filter_float_price:from", "value": str(price_from)})
+    if enum_state is not None:
+        request["variables"]["searchParameters"].append({"key": "filter_enum_state[0]", "value": str(enum_state)})
     response = session.post(OLX_ENDPOINT, headers=GRAPH_QL_HEADERS, json=request)
     response.raise_for_status()
+    print(response.json())
 
     return response.json()["data"]
 
-def parse_olx_response(response: dict) -> tuple[list[Any], bool, int]:
-    listing = response["clientCompatibleListings"]["data"]
+def parse_olx_response(response: dict, sorting: str = None) -> tuple[list[Any], bool, int]:
+    def get_price_key(item):
+        try:
+            return float(item["price"])
+        except (KeyError, IndexError, TypeError, ValueError):
+            print("error")
+            return float("inf")
+
+    listing = response.get("clientCompatibleListings",{}).get("data",{})
     items = []
     for item in listing:
         parsed_item = {}
-        parsed_item.update({"title": item["title"]})
-        parsed_item.update({"url": item["url"]})
-        parsed_item.update({"description": item["description"]})
-        if item["photos"] is not None:
-            parsed_item.update({"photos": item["photos"]})
+        parsed_item.update({"title": item.get("title",0)})
+        parsed_item.update({"url": item.get("url",0)})
+        #parsed_item.update({"description": item["description"]})
+        #if item["photos"] is not None:
+        #    parsed_item.update({"photos": item["photos"]})
         for param in item["params"]:
             if param["key"] == "price":
-                parsed_item.update({"price": param["value"]["value"],
-                                    "price_tag": param["value"]["label"],
-                                    "negotiable": param["value"]["negotiable"],
-                                    "arranged": param["value"]["arranged"]})
+                parsed_item.update({"price": param.get("value",{}).get("value",0),
+                                    "price_tag": param.get("value",{}).get("label",0),
+                                    "negotiable": param.get("value",{}).get("negotiable",0),
+                                    "arranged": param.get("value",{}).get("arranged",0)})
         items.append(parsed_item)
 
-    has_next = bool(response["clientCompatibleListings"].get("links", {}).get("next", {}).get("href"))
-    total = response["clientCompatibleListings"].get("metadata", {}).get("total_elements", 0)
+    try:
+        has_next = bool(response.get("clientCompatibleListings",{}).get("links", {}).get("next", {}).get("href"))
+    except AttributeError:
+        has_next = False
+    total = response.get("clientCompatibleListings",{}).get("metadata", {}).get("total_elements", 0)
     items = items[:PAGE_LIMIT]
+    if sorting == "ascending":
+        items = sorted(items, key=get_price_key, reverse=False)
+    elif sorting == "descending":
+        items = sorted(items, key=get_price_key, reverse=True)
 
     return items, has_next, total
 
 
 if __name__ == "__main__":
 
-    print(parse_olx_response(parse_olx_endpoint("iphone 13",1)))
+    print(parse_olx_response(parse_olx_endpoint("iphone 13",1, 1000, 5000), "ascending"))

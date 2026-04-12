@@ -4,10 +4,21 @@ from aiogram.types import InlineKeyboardMarkup, InlineKeyboardButton
 from parser.parser import PAGE_LIMIT
 
 start_keyboard = [[
-    types.InlineKeyboardButton(text="Искать товары", callback_data="lookup_goods")
+    types.InlineKeyboardButton(text="🔍 Искать товары", callback_data="lookup_goods"),
+    types.InlineKeyboardButton(text="⚙️ Настроить фильтры", callback_data="filters")
 ]]
 
-
+filter_keyboard = [[
+    types.InlineKeyboardButton(text="🔺 Максимальная цена", callback_data="max_price"),
+    types.InlineKeyboardButton(text="🔻 Минимальная цена", callback_data="min_price")
+],[
+    types.InlineKeyboardButton(text="⤴️ По возрастанию", callback_data="ascending_price"),
+    types.InlineKeyboardButton(text="⤵️ По убыванию", callback_data="descending_price")
+],[
+    types.InlineKeyboardButton(text="🟢 Применить", callback_data="apply_filters"),
+    types.InlineKeyboardButton(text="🔴 Сбростить фильтры", callback_data="reset_filters")
+]
+]
 
 def listing_keyboard(items: list[dict], offset: int, query: str, has_next: bool) -> InlineKeyboardMarkup:
     rows = [[
