@@ -10,7 +10,7 @@ from pydantic.v1 import NoneStr
 
 from .keyboards import start_keyboard, listing_keyboard, filter_keyboard
 from .messages import start_message, generate_item_card, filter_message
-from parser.parser import parse_olx_response, parse_olx_endpoint
+from parser.parser import parse_olx_response, parse_olx_endpoint, search_till_page_limit
 from .states import States, FilterStates
 
 
@@ -37,21 +37,27 @@ def setup_handlers(dp: Dispatcher):
         await run_search(query, offset=0, message_or_callback=message, data=data)
 
     @dp.callback_query(F.data.startswith("more:"))
-    async def on_load_more(callback: CallbackQuery):
-        _, query, raw_offset = callback.data.split(":", 2)
+    async def on_load_more(callback: CallbackQuery, state: FSMContext):
+        _, query, raw_offset, visual_offset = callback.data.split(":", 3)
         offset = int(raw_offset)
+        visual_offset = int(visual_offset)
+        data = await state.get_data()
         await callback.answer()
-        await run_search(query, offset=offset, message_or_callback=callback)
+        await run_search(query, offset=offset, message_or_callback=callback, data=data, visual_offset=visual_offset)
 
     @dp.callback_query(F.data == "filters", StateFilter(None))
+    @dp.callback_query(F.data == "filters", States.lookup_state)
     async def on_filters(callback: CallbackQuery, state: FSMContext):
         markup = InlineKeyboardMarkup(inline_keyboard=filter_keyboard)
+        message = filter_message(await state.get_data())
         await state.set_state(FilterStates.filter_state)
-        await callback.message.answer("Выберите какой фильтр применить", reply_markup=markup)
+        await callback.message.answer(message, reply_markup=markup, parse_mode="html")
         await callback.answer()
 
     @dp.callback_query(F.data == "max_price", FilterStates.filter_state)
     @dp.callback_query(F.data == "min_price", FilterStates.filter_state)
+    @dp.callback_query(F.data == "max_price", FilterStates.min_price_state)
+    @dp.callback_query(F.data == "min_price", FilterStates.max_price_state)
     async def on_price_bracket(callback: CallbackQuery, state: FSMContext):
         min_or_max , _ = callback.data.split('_',1)
         if min_or_max == "min":
@@ -70,7 +76,7 @@ def setup_handlers(dp: Dispatcher):
         )
         markup = InlineKeyboardMarkup(inline_keyboard=filter_keyboard)
         message = filter_message(await state.get_data())
-        await callback.answer("Обновленно")
+        await callback.answer("Обновлено")
         await callback.message.edit_text(message, reply_markup=markup, parse_mode="html")
 
     @dp.message(FilterStates.min_price_state)
@@ -117,9 +123,13 @@ def setup_handlers(dp: Dispatcher):
         await callback.message.answer("Что вы хотите сделать?", reply_markup=markup)
         await callback.answer("Фильтры применены")
 
+    @dp.callback_query
+    async def on_unhandled_callback(callback: CallbackQuery):
+        await callback.answer()
 
 
-async def run_search(query: str, offset: int, message_or_callback, data):
+
+async def run_search(query: str, offset: int, message_or_callback, data = None, visual_offset: int = None):
     """Shared logic for first search and load-more."""
     is_callback = isinstance(message_or_callback, CallbackQuery)
     send = message_or_callback.message if is_callback else message_or_callback
@@ -127,11 +137,24 @@ async def run_search(query: str, offset: int, message_or_callback, data):
     status_msg = await send.answer("🔍 Ищю обьявления…")
 
     try:
-        raw = await asyncio.get_event_loop().run_in_executor(
-            None, parse_olx_endpoint, query, offset, data.get("min_price", None),
-            data.get("max_price", None), None
-        )
-        items, has_next, total = parse_olx_response(raw, data.get("sorting", None))
+        # if data is not None:
+        #     raw = await asyncio.get_event_loop().run_in_executor(
+        #         None, parse_olx_endpoint, query, offset, data.get("min_price", None),
+        #         data.get("max_price", None), data.get("sorting", None), None
+        #     )
+        #     items, has_next, total = parse_olx_response(raw)
+        # else:
+        #     raw = await asyncio.get_event_loop().run_in_executor(
+        #         None, parse_olx_endpoint, query, offset, None, None, None, None
+        #     )
+        #     items, has_next, total = parse_olx_response(raw)
+        if data is not None:
+            items, has_next, total, new_offset = await asyncio.get_event_loop().run_in_executor(
+                None, search_till_page_limit, query, offset, data.get("min_price", None),
+                data.get("max_price", None), data.get("sorting", None))
+        else:
+            items, has_next, total, new_offset = await asyncio.get_event_loop().run_in_executor(
+                None, search_till_page_limit, query, offset, None, None, None)
     except requests.HTTPError as e:
         await status_msg.delete()
         await send.answer(f"❌ Ошибка сети: {e}")
@@ -155,15 +178,19 @@ async def run_search(query: str, offset: int, message_or_callback, data):
         )
         return
 
-    shown_so_far = offset + len(items)
+    if visual_offset is None:
+        shown_so_far = offset + len(items)
+        keyboard = listing_keyboard(items, new_offset, query, has_next, offset + len(items))
+        cards = "\n\n".join(generate_item_card(item, offset + i + 1) for i, item in enumerate(items))
+    else:
+        shown_so_far = visual_offset + len(items)
+        keyboard = listing_keyboard(items, new_offset, query, has_next, visual_offset + len(items))
+        cards = "\n\n".join(generate_item_card(item, visual_offset + i + 1) for i, item in enumerate(items))
     header = f"📦 Найдено <b>{total}</b> обьявлений. Отображаю {shown_so_far}:\n"
-
-    cards = "\n\n".join(generate_item_card(item, offset + i + 1) for i, item in enumerate(items))
     text = header + "\n" + cards
 
     if len(text) > 4000:
         text = text[:4000] + "\n\n<i>…(сокращено)</i>"
 
-    keyboard = listing_keyboard(items, offset, query, has_next)
     await send.answer(text, parse_mode="HTML", reply_markup=keyboard)
 

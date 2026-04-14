@@ -41,6 +41,9 @@ query ListingSearchQuery(
         photos {
           link
         }
+        promotion {
+          top_ad
+        }
         location {
           city {
             name
@@ -403,6 +406,7 @@ query ListingSearchQuery(
 }
 """
 
+QUERY_LIMIT = 40
 PAGE_LIMIT = 20
 
 
@@ -410,7 +414,8 @@ def string_to_url(query: str) -> str:
     return OLX_URL + "/list/q-" + query.replace(" ", "-") + "/"
 
 
-def parse_olx_endpoint(query: str, offset: int, price_from: int = None, price_to: int = None, enum_state: str = None) -> dict:
+def parse_olx_endpoint(query: str, offset: int = 0, price_from: int = None,
+                       price_to: int = None, sorting: str = None, enum_state: str = None) -> dict:
     session = requests.Session()
     session.headers.update(GRAPH_QL_HEADERS)
 
@@ -423,7 +428,7 @@ def parse_olx_endpoint(query: str, offset: int, price_from: int = None, price_to
         "variables": {
             "searchParameters": [
                 {"key": "offset", "value": str(offset)},
-                {"key": "limit", "value": str(PAGE_LIMIT)},
+                {"key": "limit", "value": str(QUERY_LIMIT)},
                 {"key": "query", "value": query},
                 {"key": "suggest_filters", "value":"true"},
                 {"key": "sl","value": "19ab61ee5a7x555c86f7"}
@@ -438,13 +443,17 @@ def parse_olx_endpoint(query: str, offset: int, price_from: int = None, price_to
         request["variables"]["searchParameters"].append({"key": "filter_float_price:from", "value": str(price_from)})
     if enum_state is not None:
         request["variables"]["searchParameters"].append({"key": "filter_enum_state[0]", "value": str(enum_state)})
+    if sorting is not None:
+        if sorting == "ascending":
+            request["variables"]["searchParameters"].append({"key": "sort_by", "value": "filter_float_price:asc"})
+        else:
+            request["variables"]["searchParameters"].append({"key": "sort_by", "value": "filter_float_price:desc"})
     response = session.post(OLX_ENDPOINT, headers=GRAPH_QL_HEADERS, json=request)
     response.raise_for_status()
-    print(response.json())
 
     return response.json()["data"]
 
-def parse_olx_response(response: dict, sorting: str = None) -> tuple[list[Any], bool, int]:
+def parse_olx_response(response: dict, offset:int = 0, sorting: str = None) -> tuple[list[Any], bool, int]:
     def get_price_key(item):
         try:
             return float(item["price"])
@@ -458,6 +467,7 @@ def parse_olx_response(response: dict, sorting: str = None) -> tuple[list[Any], 
         parsed_item = {}
         parsed_item.update({"title": item.get("title",0)})
         parsed_item.update({"url": item.get("url",0)})
+        parsed_item.update({"top": item.get("promotion", {}).get("top_ad",0)})
         #parsed_item.update({"description": item["description"]})
         #if item["photos"] is not None:
         #    parsed_item.update({"photos": item["photos"]})
@@ -474,15 +484,52 @@ def parse_olx_response(response: dict, sorting: str = None) -> tuple[list[Any], 
     except AttributeError:
         has_next = False
     total = response.get("clientCompatibleListings",{}).get("metadata", {}).get("total_elements", 0)
-    items = items[:PAGE_LIMIT]
     if sorting == "ascending":
         items = sorted(items, key=get_price_key, reverse=False)
     elif sorting == "descending":
         items = sorted(items, key=get_price_key, reverse=True)
+    items = items[offset:PAGE_LIMIT+offset]
 
     return items, has_next, total
 
 
-if __name__ == "__main__":
+def search_till_page_limit(query:str, offset:int = 0, price_from:int = None, price_to: int=None, sorting: str = None):
+    items = []
+    new_offset = offset
+    has_next = True
+    total = 0
+    while len(items) < PAGE_LIMIT:
+        new_items, has_next, total = parse_olx_response(parse_olx_endpoint(query,
+                                                                           new_offset,
+                                                                           price_from,
+                                                                           price_to,
+                                                                           sorting))
+        clean_new_items = [item for item in new_items if not item.get("top",0)]
+        if len(clean_new_items) + len(items) > PAGE_LIMIT:
+            counter = 0
+            clean_cut_items = []
+            for item in new_items:
+                if item.get("top", 0):
+                    continue
+                else:
+                    counter += 1
+                    clean_cut_items.append(item)
+                    if counter >= PAGE_LIMIT - len(items):
+                        break
+            new_offset += counter
+            items.extend(clean_cut_items)
+        else:
+            new_offset += len(new_items)
+            items.extend(clean_new_items)
+        if not has_next: return items, has_next, len(items), new_offset
+    return items, has_next, total, new_offset
 
-    print(parse_olx_response(parse_olx_endpoint("iphone 13",1, 1000, 5000), "ascending"))
+
+if __name__ == "__main__":
+    items, has_next, total, offset = search_till_page_limit("iphone", 0, 1000, 5000, "ascending")
+    for item in items:
+        print(item.get("price", 0))
+        print(item.get("top", False))
+    print(has_next)
+    print(total)
+    print(offset)
