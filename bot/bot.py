@@ -82,26 +82,34 @@ def setup_handlers(dp: Dispatcher):
     @dp.message(FilterStates.min_price_state)
     async def on_min_price(message: Message, state: FSMContext):
         try:
+            max_price = (await state.get_data()).get("max_price")
             min_price = int(message.text)
-            markup = InlineKeyboardMarkup(inline_keyboard=filter_keyboard)
-            await state.update_data(
-                min_price=min_price
-            )
-            await state.set_state(FilterStates.filter_state)
-            await message.answer(filter_message(await state.get_data()), reply_markup=markup, parse_mode="html")
+            if max_price is None or max_price >= min_price:
+                markup = InlineKeyboardMarkup(inline_keyboard=filter_keyboard)
+                await state.update_data(
+                    min_price=min_price
+                )
+                await state.set_state(FilterStates.filter_state)
+                await message.answer(filter_message(await state.get_data()), reply_markup=markup, parse_mode="html")
+            else:
+                await message.answer("Минимальная цена не может быть больше максимальной")
         except ValueError:
             await message.answer("Введите число")
 
     @dp.message(FilterStates.max_price_state)
     async def on_max_price(message: Message, state: FSMContext):
         try:
+            min_price = (await state.get_data()).get("min_price")
             max_price = int(message.text)
-            markup = InlineKeyboardMarkup(inline_keyboard=filter_keyboard)
-            await state.update_data(
-                max_price=max_price
-            )
-            await state.set_state(FilterStates.filter_state)
-            await message.answer(filter_message(await state.get_data()), reply_markup=markup, parse_mode="html")
+            if min_price is None or max_price >= min_price:
+                markup = InlineKeyboardMarkup(inline_keyboard=filter_keyboard)
+                await state.update_data(
+                    max_price=max_price
+                )
+                await state.set_state(FilterStates.filter_state)
+                await message.answer(filter_message(await state.get_data()), reply_markup=markup, parse_mode="html")
+            else:
+                await message.answer("Максимальная цена не может быть мень минимальной")
         except ValueError:
             await message.answer("Введите число")
 
