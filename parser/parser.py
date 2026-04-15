@@ -3,8 +3,6 @@ import time
 from typing import Any
 
 import requests
-from bs4 import BeautifulSoup
-from requests import Session
 
 OLX_URL = "https://www.olx.ua/uk/"
 OLX_ENDPOINT = "https://www.olx.ua/apigateway/graphql"

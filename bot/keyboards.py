@@ -1,8 +1,6 @@
 from aiogram import types
 from aiogram.types import InlineKeyboardMarkup, InlineKeyboardButton
 
-from parser.parser import PAGE_LIMIT
-
 start_keyboard = [[
     types.InlineKeyboardButton(text="🔍 Искать товары", callback_data="lookup_goods"),
     types.InlineKeyboardButton(text="⚙️ Настроить фильтры", callback_data="filters")

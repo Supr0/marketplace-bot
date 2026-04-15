@@ -6,11 +6,10 @@ from aiogram import Dispatcher, F
 from aiogram.filters import CommandStart, StateFilter
 from aiogram.fsm.context import FSMContext
 from aiogram.types import Message, InlineKeyboardMarkup, CallbackQuery
-from pydantic.v1 import NoneStr
 
+from parser.parser import search_till_page_limit
 from .keyboards import start_keyboard, listing_keyboard, filter_keyboard
 from .messages import start_message, generate_item_card, filter_message
-from parser.parser import parse_olx_response, parse_olx_endpoint, search_till_page_limit
 from .states import States, FilterStates
 
 
