@@ -11,7 +11,7 @@ load_dotenv()
 TOKEN = getenv("BOT_TOKEN")
 
 async def main():
-    logging.basicConfig(level=logging.INFO)
+    logging.basicConfig(level=getenv("LOG_LEVEL", "INFO"))
     bot = Bot(token=TOKEN)
     dp = Dispatcher()
     setup_handlers(dp)

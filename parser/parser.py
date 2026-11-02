@@ -3,6 +3,9 @@ import time
 from typing import Any
 
 import requests
+from requests import Session
+from requests.adapters import HTTPAdapter
+from urllib3 import Retry
 
 OLX_URL = "https://www.olx.ua/uk/"
 OLX_ENDPOINT = "https://www.olx.ua/apigateway/graphql"
@@ -24,6 +27,19 @@ GRAPH_QL_HEADERS = {
     "Accept": "*/*",
     "Referer": "https://www.olx.ua/uk/list/"
 }
+
+_retry = Retry(
+    total=3,
+    backoff_factor=1.5,
+    status_forcelist=(429, 500, 502, 503, 504),
+    allowed_methods=frozenset({"POST"}),   # по умолчанию POST не ретраится
+    raise_on_status=False,
+)
+
+
+session = requests.Session()
+session.headers.update(GRAPH_QL_HEADERS)
+session.mount("https://", HTTPAdapter(max_retries=_retry))
 
 GRAPH_QL_QUERY = """
 query ListingSearchQuery(
@@ -413,14 +429,9 @@ def string_to_url(query: str) -> str:
 
 
 def parse_olx_endpoint(query: str, offset: int = 0, price_from: int = None,
-                       price_to: int = None, sorting: str = None, enum_state: str = None) -> dict:
-    session = requests.Session()
-    session.headers.update(GRAPH_QL_HEADERS)
-
+                       price_to: int = None, sorting: str = None,
+                       enum_state: str = None, timeout: int = 10000) -> dict:
     time.sleep(random.uniform(2, 5))
-    print("price_from: " + str(price_from))
-    print("price_to: " + str(price_to))
-
     request = {
         "query": GRAPH_QL_QUERY,
         "variables": {
@@ -436,90 +447,70 @@ def parse_olx_endpoint(query: str, offset: int = 0, price_from: int = None,
         }
     }
     if price_to is not None:
-        request["variables"]["searchParameters"].append({"key": "filter_float_price:to", "value": str(price_to)})
+        request["variables"]["searchParameters"].append({"key": "filter_float_price:to",
+                                                         "value": str(price_to)})
     if price_from is not None:
-        request["variables"]["searchParameters"].append({"key": "filter_float_price:from", "value": str(price_from)})
+        request["variables"]["searchParameters"].append({"key": "filter_float_price:from",
+                                                         "value": str(price_from)})
     if enum_state is not None:
-        request["variables"]["searchParameters"].append({"key": "filter_enum_state[0]", "value": str(enum_state)})
+        request["variables"]["searchParameters"].append({"key": "filter_enum_state[0]",
+                                                         "value": str(enum_state)})
     if sorting is not None:
         if sorting == "ascending":
-            request["variables"]["searchParameters"].append({"key": "sort_by", "value": "filter_float_price:asc"})
+            request["variables"]["searchParameters"].append({"key": "sort_by",
+                                                             "value": "filter_float_price:asc"})
         else:
-            request["variables"]["searchParameters"].append({"key": "sort_by", "value": "filter_float_price:desc"})
-    response = session.post(OLX_ENDPOINT, headers=GRAPH_QL_HEADERS, json=request)
+            request["variables"]["searchParameters"].append({"key": "sort_by",
+                                                             "value": "filter_float_price:desc"})
+    response = session.post(OLX_ENDPOINT, headers=GRAPH_QL_HEADERS, json=request, timeout=timeout)
     response.raise_for_status()
 
     return response.json()["data"]
 
-def parse_olx_response(response: dict, offset:int = 0, sorting: str = None) -> tuple[list[Any], bool, int]:
-    def get_price_key(item):
-        try:
-            return float(item["price"])
-        except (KeyError, IndexError, TypeError, ValueError):
-            print("error")
-            return float("inf")
 
-    listing = response.get("clientCompatibleListings",{}).get("data",{})
+def parse_olx_response(response: dict) -> tuple[list[Any], bool, int]:
+    listing = response.get("clientCompatibleListings", {}).get("data", {})
     items = []
     for item in listing:
-        parsed_item = {}
-        parsed_item.update({"title": item.get("title",0)})
-        parsed_item.update({"url": item.get("url",0)})
-        parsed_item.update({"top": item.get("promotion", {}).get("top_ad",0)})
-        #parsed_item.update({"description": item["description"]})
-        #if item["photos"] is not None:
-        #    parsed_item.update({"photos": item["photos"]})
+        parsed_item = {
+            "title": item.get("title", 0),
+            "url": item.get("url", 0),
+            "top": item.get("promotion", {}).get("top_ad", 0),
+        }
         for param in item["params"]:
             if param["key"] == "price":
-                parsed_item.update({"price": param.get("value",{}).get("value",0),
-                                    "price_tag": param.get("value",{}).get("label",0),
-                                    "negotiable": param.get("value",{}).get("negotiable",0),
-                                    "arranged": param.get("value",{}).get("arranged",0)})
+                value = param.get("value", {})
+                parsed_item.update({
+                    "price": value.get("value", 0),
+                    "price_tag": value.get("label", 0),
+                    "negotiable": value.get("negotiable", 0),
+                    "arranged": value.get("arranged", 0),
+                })
         items.append(parsed_item)
 
-    try:
-        has_next = bool(response.get("clientCompatibleListings",{}).get("links", {}).get("next", {}).get("href"))
-    except AttributeError:
-        has_next = False
-    total = response.get("clientCompatibleListings",{}).get("metadata", {}).get("total_elements", 0)
-    if sorting == "ascending":
-        items = sorted(items, key=get_price_key, reverse=False)
-    elif sorting == "descending":
-        items = sorted(items, key=get_price_key, reverse=True)
-    items = items[offset:PAGE_LIMIT+offset]
-
+    links = response.get("clientCompatibleListings", {}).get("links") or {}
+    has_next = bool((links.get("next") or {}).get("href"))
+    total = response.get("clientCompatibleListings", {}).get("metadata", {}).get("total_elements", 0)
     return items, has_next, total
 
 
-def search_till_page_limit(query:str, offset:int = 0, price_from:int = None, price_to: int=None, sorting: str = None):
+def search_till_page_limit(query: str, offset: int = 0, price_from: int = None,
+                           price_to: int = None, sorting: str = None):
     items = []
     new_offset = offset
     has_next = True
     total = 0
-    while len(items) < PAGE_LIMIT:
-        new_items, has_next, total = parse_olx_response(parse_olx_endpoint(query,
-                                                                           new_offset,
-                                                                           price_from,
-                                                                           price_to,
-                                                                           sorting))
-        clean_new_items = [item for item in new_items if not item.get("top",0)]
-        if len(clean_new_items) + len(items) > PAGE_LIMIT:
-            counter = 0
-            clean_cut_items = []
-            for item in new_items:
-                if item.get("top", 0):
-                    continue
-                else:
-                    counter += 1
-                    clean_cut_items.append(item)
-                    if counter >= PAGE_LIMIT - len(items):
-                        break
-            new_offset += counter
-            items.extend(clean_cut_items)
-        else:
-            new_offset += len(new_items)
-            items.extend(clean_new_items)
-        if not has_next: return items, has_next, len(items), new_offset
+    while len(items) < PAGE_LIMIT and has_next:
+        page, has_next, total = parse_olx_response(
+            parse_olx_endpoint(query, new_offset, price_from, price_to, sorting)
+        )
+        new_offset += len(page)          # сколько сырых объявлений реально потребили
+        for item in page:
+            if item.get("top"):
+                continue
+            items.append(item)
+            if len(items) >= PAGE_LIMIT:
+                break
     return items, has_next, total, new_offset
 
 
