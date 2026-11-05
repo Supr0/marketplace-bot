@@ -1,4 +1,5 @@
 import asyncio
+import json
 import logging
 import random
 from typing import Any
@@ -480,6 +481,8 @@ async def parse_olx_endpoint(query: str, offset: int = 0, price_from: int = None
 def parse_olx_response(response: dict) -> tuple[list[Any], bool, int]:
     listing = response.get("clientCompatibleListings", {}).get("data", {})
     items = []
+    if listing is None:
+        return [], False, 0
     for item in listing:
         parsed_item = {
             "title": item.get("title", 0),
