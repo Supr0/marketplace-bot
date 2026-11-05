@@ -1,25 +1,12 @@
+import asyncio
+import logging
 import random
-import time
 from typing import Any
 
-import requests
-from requests import Session
-from requests.adapters import HTTPAdapter
-from urllib3 import Retry
+import aiohttp
 
 OLX_URL = "https://www.olx.ua/uk/"
 OLX_ENDPOINT = "https://www.olx.ua/apigateway/graphql"
-
-HEADERS = {
-    "User-Agent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/123.0.0.0 Safari/537.36",
-    "Accept": "text/html,application/xhtml+xml,application/xml;q=0.9,image/avif,image/webp,*/*;q=0.8",
-    "Accept-Language": "uk-UA,uk;q=0.9,en-US;q=0.8,en;q=0.7",
-    "Accept-Encoding": "gzip, deflate, br",
-    "Referer": "https://www.google.com/",
-    "DNT": "1",
-    "Connection": "keep-alive",
-    "Upgrade-Insecure-Requests": "1",
-}
 
 GRAPH_QL_HEADERS = {
     "Content-Type": "application/json",
@@ -28,18 +15,9 @@ GRAPH_QL_HEADERS = {
     "Referer": "https://www.olx.ua/uk/list/"
 }
 
-_retry = Retry(
-    total=3,
-    backoff_factor=1.5,
-    status_forcelist=(429, 500, 502, 503, 504),
-    allowed_methods=frozenset({"POST"}),   # по умолчанию POST не ретраится
-    raise_on_status=False,
-)
+_session: aiohttp.ClientSession | None = None
 
-
-session = requests.Session()
-session.headers.update(GRAPH_QL_HEADERS)
-session.mount("https://", HTTPAdapter(max_retries=_retry))
+logger = logging.getLogger(__name__)
 
 GRAPH_QL_QUERY = """
 query ListingSearchQuery(
@@ -420,18 +398,50 @@ query ListingSearchQuery(
 }
 """
 
-QUERY_LIMIT = 40
-PAGE_LIMIT = 20
+QUERY_LIMIT = 20
+
+def get_session() -> aiohttp.ClientSession:
+    global _session
+    if _session is None or _session.closed:
+        _session = aiohttp.ClientSession(
+            headers=GRAPH_QL_HEADERS,
+            timeout=aiohttp.ClientTimeout(total=25, connect=5),
+        )
+    return _session
+
+async def close_session() -> None:
+    global _session
+    if _session is not None and not _session.closed:
+        await _session.close()
+    _session = None
 
 
-def string_to_url(query: str) -> str:
-    return OLX_URL + "/list/q-" + query.replace(" ", "-") + "/"
+RETRY_STATUSES = {429, 500, 502, 503, 504}
+RETRY_ATTEMPTS = 3
+
+async def _post_json(payload: dict) -> dict:
+    session = get_session()
+    last_error: Exception | None = None
+    for attempt in range(1, RETRY_ATTEMPTS + 1):
+        try:
+            async with session.post(OLX_ENDPOINT, json=payload) as resp:
+                if resp.status in RETRY_STATUSES and attempt < RETRY_ATTEMPTS:
+                    last_error = RuntimeError(f"Olx returned {resp.status}")
+                else:
+                    resp.raise_for_status()
+                    return await resp.json(content_type=None)
+        except (aiohttp.ClientError, asyncio.TimeoutError) as exc:
+            last_error = exc
+        if attempt < RETRY_ATTEMPTS:
+            delay = 1.5 ** attempt
+            logger.warning("OLX attempt %d failed: %r retry in %.1fs", attempt, last_error, delay)
+            await asyncio.sleep(delay)
+    raise last_error
 
 
-def parse_olx_endpoint(query: str, offset: int = 0, price_from: int = None,
+async def parse_olx_endpoint(query: str, offset: int = 0, price_from: int = None,
                        price_to: int = None, sorting: str = None,
-                       enum_state: str = None, timeout: int = 10000) -> dict:
-    time.sleep(random.uniform(2, 5))
+                       enum_state: str = None) -> dict:
     request = {
         "query": GRAPH_QL_QUERY,
         "variables": {
@@ -462,10 +472,9 @@ def parse_olx_endpoint(query: str, offset: int = 0, price_from: int = None,
         else:
             request["variables"]["searchParameters"].append({"key": "sort_by",
                                                              "value": "filter_float_price:desc"})
-    response = session.post(OLX_ENDPOINT, headers=GRAPH_QL_HEADERS, json=request, timeout=timeout)
-    response.raise_for_status()
-
-    return response.json()["data"]
+    await asyncio.sleep(random.uniform(0.5, 1.5))
+    logger.debug("OLX query=%r price_from=%s price_to=%s", query, price_from, price_to)
+    return (await _post_json(request))["data"]
 
 
 def parse_olx_response(response: dict) -> tuple[list[Any], bool, int]:
@@ -477,7 +486,7 @@ def parse_olx_response(response: dict) -> tuple[list[Any], bool, int]:
             "url": item.get("url", 0),
             "top": item.get("promotion", {}).get("top_ad", 0),
         }
-        for param in item["params"]:
+        for param in item.get("params") or []:
             if param["key"] == "price":
                 value = param.get("value", {})
                 parsed_item.update({
@@ -494,31 +503,21 @@ def parse_olx_response(response: dict) -> tuple[list[Any], bool, int]:
     return items, has_next, total
 
 
-def search_till_page_limit(query: str, offset: int = 0, price_from: int = None,
+async def search_page(query: str, offset: int = 0, price_from: int = None,
                            price_to: int = None, sorting: str = None):
-    items = []
-    new_offset = offset
-    has_next = True
-    total = 0
-    while len(items) < PAGE_LIMIT and has_next:
-        page, has_next, total = parse_olx_response(
-            parse_olx_endpoint(query, new_offset, price_from, price_to, sorting)
-        )
-        new_offset += len(page)          # сколько сырых объявлений реально потребили
-        for item in page:
-            if item.get("top"):
-                continue
-            items.append(item)
-            if len(items) >= PAGE_LIMIT:
-                break
-    return items, has_next, total, new_offset
+    page, has_next, total = parse_olx_response(
+        await parse_olx_endpoint(query, offset, price_from, price_to, sorting)
+    )
+    items = [item for item in page if not (item.get("top"))]
+    return items, has_next, total, offset + len(page)
 
 
 if __name__ == "__main__":
-    items, has_next, total, offset = search_till_page_limit("iphone", 0, 1000, 5000, "ascending")
+    items, has_next, total, _ = asyncio.run(search_page("iphone",
+                                                     0, 1000,
+                                                     5000, "ascending"))
     for item in items:
         print(item.get("price", 0))
         print(item.get("top", False))
     print(has_next)
     print(total)
-    print(offset)

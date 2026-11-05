@@ -18,7 +18,7 @@ filter_keyboard = [[
 ]
 ]
 
-def listing_keyboard(items: list[dict], offset: int, query: str, has_next: bool, visual_offset:int) -> InlineKeyboardMarkup:
+def listing_keyboard(items: list[dict], offset: int, has_next: bool, visual_offset:int) -> InlineKeyboardMarkup:
     rows = [[
     types.InlineKeyboardButton(text="🔍 Новый запрос", callback_data="change_lookup"),
     types.InlineKeyboardButton(text="⚙️ Настроить фильтры", callback_data="filters"),
@@ -35,7 +35,7 @@ def listing_keyboard(items: list[dict], offset: int, query: str, has_next: bool,
         rows.append([
             InlineKeyboardButton(
                 text="⬇️ Загрузить ещё",
-                callback_data=f"more:{query}:{offset}:{visual_offset}",
+                callback_data=f"more:{offset}:{visual_offset}",
             )
         ])
 

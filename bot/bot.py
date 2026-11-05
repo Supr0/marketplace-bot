@@ -1,13 +1,12 @@
-import asyncio
 import logging
 
-import requests
 from aiogram import Dispatcher, F
+import aiohttp
 from aiogram.filters import CommandStart, StateFilter
 from aiogram.fsm.context import FSMContext
 from aiogram.types import Message, InlineKeyboardMarkup, CallbackQuery
 
-from parser.parser import search_till_page_limit
+from parser.parser import search_page
 from .keyboards import start_keyboard, listing_keyboard, filter_keyboard
 from .messages import start_message, generate_item_card, filter_message
 from .states import States, FilterStates
@@ -33,14 +32,19 @@ def setup_handlers(dp: Dispatcher):
             await message.answer("Введите поисковой запрос.")
             return
         data = await state.get_data()
+        await state.update_data(query=query)
         await run_search(query, offset=0, message_or_callback=message, data=data)
 
     @dp.callback_query(F.data.startswith("more:"))
     async def on_load_more(callback: CallbackQuery, state: FSMContext):
-        _, query, raw_offset, visual_offset = callback.data.split(":", 3)
+        data = await state.get_data()
+        query = data.get("query")
+        if not query:
+            await callback.answer("Сессия истекла.")
+            return
+        _, raw_offset, visual_offset = callback.data.split(":", 2)
         offset = int(raw_offset)
         visual_offset = int(visual_offset)
-        data = await state.get_data()
         await callback.answer()
         await run_search(query, offset=offset, message_or_callback=callback, data=data, visual_offset=visual_offset)
 
@@ -140,29 +144,16 @@ async def run_search(query: str, offset: int, message_or_callback, data = None, 
     """Shared logic for first search and load-more."""
     is_callback = isinstance(message_or_callback, CallbackQuery)
     send = message_or_callback.message if is_callback else message_or_callback
-
     status_msg = await send.answer("🔍 Ищю обьявления…")
 
     try:
-        # if data is not None:
-        #     raw = await asyncio.get_event_loop().run_in_executor(
-        #         None, parse_olx_endpoint, query, offset, data.get("min_price", None),
-        #         data.get("max_price", None), data.get("sorting", None), None
-        #     )
-        #     items, has_next, total = parse_olx_response(raw)
-        # else:
-        #     raw = await asyncio.get_event_loop().run_in_executor(
-        #         None, parse_olx_endpoint, query, offset, None, None, None, None
-        #     )
-        #     items, has_next, total = parse_olx_response(raw)
-        if data is not None:
-            items, has_next, total, new_offset = await asyncio.get_event_loop().run_in_executor(
-                None, search_till_page_limit, query, offset, data.get("min_price", None),
-                data.get("max_price", None), data.get("sorting", None))
-        else:
-            items, has_next, total, new_offset = await asyncio.get_event_loop().run_in_executor(
-                None, search_till_page_limit, query, offset, None, None, None)
-    except requests.HTTPError as e:
+        items, has_next, total, new_offset = await search_page(
+            query, offset,
+            (data or {}).get("min_price"),
+            (data or {}).get("max_price"),
+            (data or {}).get("sorting")
+        )
+    except aiohttp.ClientError as e:
         await status_msg.delete()
         await send.answer(f"❌ Ошибка сети: {e}")
         return
@@ -187,11 +178,11 @@ async def run_search(query: str, offset: int, message_or_callback, data = None, 
 
     if visual_offset is None:
         shown_so_far = offset + len(items)
-        keyboard = listing_keyboard(items, new_offset, query, has_next, offset + len(items))
+        keyboard = listing_keyboard(items, new_offset, has_next, shown_so_far)
         cards = "\n\n".join(generate_item_card(item, offset + i + 1) for i, item in enumerate(items))
     else:
         shown_so_far = visual_offset + len(items)
-        keyboard = listing_keyboard(items, new_offset, query, has_next, visual_offset + len(items))
+        keyboard = listing_keyboard(items, new_offset, has_next, shown_so_far)
         cards = "\n\n".join(generate_item_card(item, visual_offset + i + 1) for i, item in enumerate(items))
     header = f"📦 Найдено <b>{total}</b> обьявлений. Отображаю {shown_so_far}:\n"
     text = header + "\n" + cards
