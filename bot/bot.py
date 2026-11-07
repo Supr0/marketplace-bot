@@ -1,18 +1,19 @@
 import logging
 
 from aiogram import Dispatcher, F
-import aiohttp
 from aiogram.filters import CommandStart, StateFilter
 from aiogram.fsm.context import FSMContext
 from aiogram.types import Message, InlineKeyboardMarkup, CallbackQuery
 
-from parser.parser import search_page
+from core import errors
+from core.models import SearchQuery
+from core.ports import MarketplaceSource
 from .keyboards import start_keyboard, listing_keyboard, filter_keyboard
 from .messages import start_message, generate_item_card, filter_message
 from .states import States, FilterStates
 
 
-def setup_handlers(dp: Dispatcher):
+def setup_handlers(dp: Dispatcher, source: MarketplaceSource):
     @dp.message(CommandStart())
     async def on_start(message: Message) -> None:
         content = start_message
@@ -33,20 +34,19 @@ def setup_handlers(dp: Dispatcher):
             return
         data = await state.get_data()
         await state.update_data(query=query)
-        await run_search(query, offset=0, message_or_callback=message, data=data)
+        await run_search(source, query, cursor=None, message_or_callback=message, data=data)
 
     @dp.callback_query(F.data.startswith("more:"))
     async def on_load_more(callback: CallbackQuery, state: FSMContext):
         data = await state.get_data()
-        query = data.get("query")
+        query = data.get("query", "")
         if not query:
             await callback.answer("Сессия истекла.")
             return
-        _, raw_offset, visual_offset = callback.data.split(":", 2)
-        offset = int(raw_offset)
+        _, cursor, visual_offset = callback.data.split(":", 2)
         visual_offset = int(visual_offset)
         await callback.answer()
-        await run_search(query, offset=offset, message_or_callback=callback, data=data, visual_offset=visual_offset)
+        await run_search(source, query, cursor=cursor, message_or_callback=callback, data=data, visual_offset=visual_offset)
 
     @dp.callback_query(F.data == "filters", StateFilter(None))
     @dp.callback_query(F.data == "filters", States.lookup_state)
@@ -140,26 +140,34 @@ def setup_handlers(dp: Dispatcher):
 
 
 
-async def run_search(query: str, offset: int, message_or_callback, data = None, visual_offset: int = None):
+async def run_search(source: MarketplaceSource, query: str, cursor: str | None, message_or_callback, data = None,
+                     visual_offset: int = 0):
     """Shared logic for first search and load-more."""
     is_callback = isinstance(message_or_callback, CallbackQuery)
     send = message_or_callback.message if is_callback else message_or_callback
     status_msg = await send.answer("🔍 Ищю обьявления…")
 
     try:
-        items, has_next, total, new_offset = await search_page(
-            query, offset,
-            (data or {}).get("min_price"),
-            (data or {}).get("max_price"),
-            (data or {}).get("sorting")
+        page = await source.search(
+            SearchQuery(
+                query=query,
+                price_from=(data or {}).get("min_price"),
+                price_to=(data or {}).get("max_price"),
+                sorting=(data or {}).get("sorting"),
+                cursor=cursor
+            )
         )
-    except aiohttp.ClientError as e:
+    except errors.SourceUnavailable as e:
         await status_msg.delete()
-        await send.answer(f"❌ Ошибка сети: {e}")
+        await send.answer(f"❌ Маркетплейс недоступен, попробуйте позже")
         return
-    except RuntimeError as e:
+    except errors.SourceRejectedQuery:
         await status_msg.delete()
-        await send.answer(f"❌ OLX ошибка: {e}")
+        await send.answer("❌ Маркетплейс отклонил запрос, попробуйте позже")
+        return
+    except errors.MarketplaceError as e:
+        await status_msg.delete()
+        await send.answer(f"❌ Что-то пошло не так: {e}")
         return
     except Exception as e:
         logging.exception("Lookup exception:")
@@ -169,22 +177,18 @@ async def run_search(query: str, offset: int, message_or_callback, data = None, 
 
     await status_msg.delete()
 
-    if not items:
+    if not page.items:
         await send.answer(
             "😕 <b>Ничего не найдено.</b>\n\nПопробуйте другой запрос.",
             parse_mode="HTML",
         )
         return
 
-    if visual_offset is None:
-        shown_so_far = offset + len(items)
-        keyboard = listing_keyboard(items, new_offset, has_next, shown_so_far)
-        cards = "\n\n".join(generate_item_card(item, offset + i + 1) for i, item in enumerate(items))
-    else:
-        shown_so_far = visual_offset + len(items)
-        keyboard = listing_keyboard(items, new_offset, has_next, shown_so_far)
-        cards = "\n\n".join(generate_item_card(item, visual_offset + i + 1) for i, item in enumerate(items))
-    header = f"📦 Найдено <b>{total}</b> обьявлений. Отображаю {shown_so_far}:\n"
+    start = visual_offset
+    shown_so_far = start + len(page.items)
+    keyboard = listing_keyboard(page.next_cursor, shown_so_far)
+    cards = "\n\n".join(generate_item_card(item, start + i + 1) for i, item in enumerate(page.items))
+    header = f"📦 Найдено <b>{page.total}</b> обьявлений. Отображаю {shown_so_far}:\n"
     text = header + "\n" + cards
 
     if len(text) > 4000:

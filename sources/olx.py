@@ -1,10 +1,11 @@
 import asyncio
-import json
 import logging
 import random
-from typing import Any
 
 import aiohttp
+
+from core.errors import SourceUnavailable
+from core.models import Page, SearchQuery, Listing
 
 OLX_URL = "https://www.olx.ua/uk/"
 OLX_ENDPOINT = "https://www.olx.ua/apigateway/graphql"
@@ -399,7 +400,10 @@ query ListingSearchQuery(
 }
 """
 
-QUERY_LIMIT = 20
+
+def _offset(query: SearchQuery) -> int:
+    offset = 0 if query.cursor is None else int(query.cursor)
+    return offset
 
 def get_session() -> aiohttp.ClientSession:
     global _session
@@ -437,19 +441,17 @@ async def _post_json(payload: dict) -> dict:
             delay = 1.5 ** attempt
             logger.warning("OLX attempt %d failed: %r retry in %.1fs", attempt, last_error, delay)
             await asyncio.sleep(delay)
-    raise last_error
+    raise SourceUnavailable(f"OLX request failed: {last_error}")  from last_error
 
 
-async def parse_olx_endpoint(query: str, offset: int = 0, price_from: int = None,
-                       price_to: int = None, sorting: str = None,
-                       enum_state: str = None) -> dict:
+async def parse_olx_endpoint(query: SearchQuery) -> dict:
     request = {
         "query": GRAPH_QL_QUERY,
         "variables": {
             "searchParameters": [
-                {"key": "offset", "value": str(offset)},
-                {"key": "limit", "value": str(QUERY_LIMIT)},
-                {"key": "query", "value": query},
+                {"key": "offset", "value": str(_offset(query))},
+                {"key": "limit", "value": str(query.limit)},
+                {"key": "query", "value": query.query},
                 {"key": "suggest_filters", "value":"true"},
                 {"key": "sl","value": "19ab61ee5a7x555c86f7"}
             ],
@@ -457,70 +459,69 @@ async def parse_olx_endpoint(query: str, offset: int = 0, price_from: int = None
             "fetchPayAndShip":True
         }
     }
-    if price_to is not None:
+    if query.price_to is not None:
         request["variables"]["searchParameters"].append({"key": "filter_float_price:to",
-                                                         "value": str(price_to)})
-    if price_from is not None:
+                                                         "value": str(query.price_to)})
+    if query.price_from is not None:
         request["variables"]["searchParameters"].append({"key": "filter_float_price:from",
-                                                         "value": str(price_from)})
-    if enum_state is not None:
-        request["variables"]["searchParameters"].append({"key": "filter_enum_state[0]",
-                                                         "value": str(enum_state)})
-    if sorting is not None:
-        if sorting == "ascending":
+                                                         "value": str(query.price_from)})
+    if query.sorting is not None:
+        if query.sorting == "ascending":
             request["variables"]["searchParameters"].append({"key": "sort_by",
                                                              "value": "filter_float_price:asc"})
         else:
             request["variables"]["searchParameters"].append({"key": "sort_by",
                                                              "value": "filter_float_price:desc"})
     await asyncio.sleep(random.uniform(0.5, 1.5))
-    logger.debug("OLX query=%r price_from=%s price_to=%s", query, price_from, price_to)
+    logger.debug("OLX query=%r price_from=%s price_to=%s", query.query, query.price_from, query.price_to)
     return (await _post_json(request))["data"]
 
 
-def parse_olx_response(response: dict) -> tuple[list[Any], bool, int]:
+def parse_olx_response(response: dict) -> tuple[list[Listing], bool, int]:
     listing = response.get("clientCompatibleListings", {}).get("data", {})
-    items = []
     if listing is None:
         return [], False, 0
+    items = []
     for item in listing:
-        parsed_item = {
-            "title": item.get("title", 0),
-            "url": item.get("url", 0),
-            "top": item.get("promotion", {}).get("top_ad", 0),
-        }
+        id = item.get("id",0)
+        title = item.get("title", "")
+        url = item.get("url", "")
+        top = item.get("promotion", {}).get("top_ad", 0)
+        price = 0
+        price_tag = ""
+        negotiable = False
+        arranged = False
         for param in item.get("params") or []:
             if param["key"] == "price":
                 value = param.get("value", {})
-                parsed_item.update({
-                    "price": value.get("value", 0),
-                    "price_tag": value.get("label", 0),
-                    "negotiable": value.get("negotiable", 0),
-                    "arranged": value.get("arranged", 0),
-                })
-        items.append(parsed_item)
-
+                price = value.get("value", 0)
+                price_tag = value.get("label", "")
+                negotiable = value.get("negotiable", 0)
+                arranged = value.get("arranged", 0)
+        items.append(Listing(id=id,
+                             title=title,
+                             url=url,
+                             top=top,
+                             price=price,
+                             price_tag=price_tag,
+                             negotiable=negotiable,
+                             arranged=arranged))
     links = response.get("clientCompatibleListings", {}).get("links") or {}
     has_next = bool((links.get("next") or {}).get("href"))
     total = response.get("clientCompatibleListings", {}).get("metadata", {}).get("total_elements", 0)
     return items, has_next, total
 
 
-async def search_page(query: str, offset: int = 0, price_from: int = None,
-                           price_to: int = None, sorting: str = None):
-    page, has_next, total = parse_olx_response(
-        await parse_olx_endpoint(query, offset, price_from, price_to, sorting)
-    )
-    items = [item for item in page if not (item.get("top"))]
-    return items, has_next, total, offset + len(page)
+class OlxSource:
+    name = "olx"
 
+    async def search(self, query: SearchQuery) -> Page:
+        offset = _offset(query)
+        data = await parse_olx_endpoint(query)
 
-if __name__ == "__main__":
-    items, has_next, total, _ = asyncio.run(search_page("iphone",
-                                                     0, 1000,
-                                                     5000, "ascending"))
-    for item in items:
-        print(item.get("price", 0))
-        print(item.get("top", False))
-    print(has_next)
-    print(total)
+        raw_items, has_next, total = parse_olx_response(data)
+
+        items = [item for item in raw_items if not item.top]
+        next_cursor = str(offset + len(raw_items))
+        page = Page(items, total, next_cursor if has_next else None)
+        return page

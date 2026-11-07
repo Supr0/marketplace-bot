@@ -1,5 +1,7 @@
 from aiogram.utils.formatting import as_list, Bold, as_numbered_section
 
+from core.models import Listing
+
 start_message = as_list(
     Bold("Привет! Я бот который помогает искать товары на OLX! \n\n"),
     as_numbered_section(
@@ -13,14 +15,14 @@ start_message = as_list(
     "Либо нажми " + "\"Настроить фильтры\" " + "чтобы применить фильтры к запросу"
 )
 
-def generate_item_card(item: dict, index: int) -> str:
-    title = item["title"]
-    url = item["url"]
-    if item.get("price_tag"):
-        price_str = f"💰 {item['price_tag']}"
-        if item.get("negotiable"):
+def generate_item_card(item: Listing, index: int) -> str:
+    title = item.title
+    url = item.url
+    if item.price_tag is not None:
+        price_str = f"💰 {item.price_tag}"
+        if item.negotiable:
             price_str += " (торг)"
-        if item.get("arranged"):
+        if item.arranged:
             price_str += "\n🤝 Договорная"
     else:
         price_str = "💰 Цена не указана"
